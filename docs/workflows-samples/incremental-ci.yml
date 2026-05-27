@@ -1,0 +1,129 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# incremental-ci.yml — sanitized template
+#
+# Strategy: detect-changes job emits per-service "needs build" booleans;
+# subsequent jobs gate on `if: needs.detect-changes.outputs.<svc> == 'true'`.
+#
+# See: ADR-0001 in this repo.
+#
+# Placeholders to replace before use:
+#   <REGISTRY>       — your container registry (e.g. ghcr.io/<org>)
+#   <COVERAGE_TOKEN> — codecov / coveralls token, set as repo secret
+# ─────────────────────────────────────────────────────────────────────────────
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+
+  # ─── 1. Detect which services changed ─────────────────────────────────────
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      auth:      ${{ steps.filter.outputs.auth }}
+      user:      ${{ steps.filter.outputs.user }}
+      shortener: ${{ steps.filter.outputs.shortener }}
+      shared:    ${{ steps.filter.outputs.shared }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            shared:
+              - 'libs/**'
+              - 'go.mod'
+              - 'go.sum'
+            auth:
+              - 'apps/auth-service/**'
+              - 'libs/**'           # shared lib changes affect all services
+            user:
+              - 'apps/user-service/**'
+              - 'libs/**'
+            shortener:
+              - 'apps/shortener-service/**'
+              - 'libs/**'
+
+  # ─── 2. Per-service build matrix, gated on detection ──────────────────────
+  build:
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [auth, user, shortener]
+    if: |
+      needs.detect-changes.outputs[matrix.service] == 'true' ||
+      needs.detect-changes.outputs.shared == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache-dependency-path: apps/${{ matrix.service }}-service/go.sum
+
+      - name: Build
+        working-directory: apps/${{ matrix.service }}-service
+        run: go build ./...
+
+      - name: Unit tests
+        working-directory: apps/${{ matrix.service }}-service
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Property-based tests
+        working-directory: apps/${{ matrix.service }}-service
+        run: go test -tags=property ./...
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: apps/${{ matrix.service }}-service/coverage.out
+          flags: ${{ matrix.service }}
+          token: ${{ secrets.CODECOV_TOKEN }}   # placeholder
+
+  # ─── 3. Image publish only on main, only for services that built ──────────
+  publish-image:
+    needs: [detect-changes, build]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [auth, user, shortener]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip if unchanged
+        if: |
+          needs.detect-changes.outputs[matrix.service] != 'true' &&
+          needs.detect-changes.outputs.shared != 'true'
+        run: |
+          echo "Service ${{ matrix.service }} unchanged; skipping image publish."
+          exit 0
+
+      - uses: docker/login-action@v3
+        with:
+          registry: <REGISTRY>     # placeholder
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v5
+        with:
+          context: apps/${{ matrix.service }}-service
+          push: true
+          tags: <REGISTRY>/${{ matrix.service }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+
+  # ─── 4. Bump image tag in apps-repo (triggers ArgoCD reconcile) ───────────
+  bump-image-in-apps-repo:
+    needs: publish-image
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger apps-repo bump
+        # Either: open a PR in apps-repo via gh / Argo CD Image Updater
+        # Concrete impl is repo-specific; placeholder here.
+        run: echo "see ADR-0002 for the apps-repo bump pattern"

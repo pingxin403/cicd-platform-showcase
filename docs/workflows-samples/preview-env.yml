@@ -1,0 +1,85 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# preview-env.yml — per-PR preview environment lifecycle
+#
+# On PR open/sync: deploy the PR's HEAD into the shared staging cluster as a
+# new Istio-routed lane (see ADR-0003). On close/merge: tear down.
+#
+# Placeholders:
+#   <CLUSTER>              — kubectl context for staging
+#   <APPS_REPO>            — path / repo where lane manifests live
+#   <PREVIEW_DOMAIN>       — base host for preview URLs (e.g. preview.example.com)
+# ─────────────────────────────────────────────────────────────────────────────
+name: Preview Environment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+concurrency:
+  group: preview-env-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ─── On PR open / sync: spin up or update lane ─────────────────────────
+  deploy-lane:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set lane vars
+        id: vars
+        run: |
+          echo "lane=PR-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          echo "url=https://pr-${{ github.event.pull_request.number }}.<PREVIEW_DOMAIN>" >> $GITHUB_OUTPUT
+
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v4
+      # ... cluster auth via OIDC / kubeconfig secret omitted ...
+
+      - name: Render lane manifests
+        run: |
+          # Generate Deployment / Service / VirtualService / DestinationRule
+          # for each service with version: ${{ steps.vars.outputs.lane }}
+          ./hack/render-lane.sh ${{ steps.vars.outputs.lane }} ${{ github.sha }}
+
+      - name: Apply
+        run: kubectl apply -f rendered/ -n staging
+
+      - name: Wait for rollout
+        run: |
+          for svc in auth user shortener gateway; do
+            kubectl rollout status deploy/${svc}-${{ steps.vars.outputs.lane }} -n staging --timeout=5m
+          done
+
+      - name: Comment preview URL
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `Preview environment: ${{ steps.vars.outputs.url }}\n\nSet header \`X-PR-Lane: ${{ steps.vars.outputs.lane }}\` to route to this PR's services.\n\nLane is auto-deleted when this PR is closed.`
+            })
+
+  # ─── On PR close / merge: tear down lane ───────────────────────────────
+  teardown-lane:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete lane resources
+        run: |
+          kubectl delete deploy,svc,virtualservice,destinationrule \
+            -n staging \
+            -l lane=PR-${{ github.event.pull_request.number }}
+
+  # ─── Nightly garbage collection of stale lanes ─────────────────────────
+  # (run separately on a schedule; sketch only)
+  # gc-stale-lanes:
+  #   schedule: '0 3 * * *'
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Find lanes whose PR is closed > 7 days
+  #       run: ./hack/lane-gc.sh

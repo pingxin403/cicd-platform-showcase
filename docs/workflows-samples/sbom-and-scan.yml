@@ -1,0 +1,79 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# sbom-and-scan.yml — generate SBOM, scan for vulnerabilities, gate the merge
+#
+# Runs alongside CI (not a replacement). Output uploaded as workflow artifact
+# and (optionally) attached to release.
+#
+# Placeholders:
+#   <REGISTRY> / <IMAGE>     — container image to scan
+#   <THRESHOLD>              — CVSS severity threshold (default: HIGH+)
+# ─────────────────────────────────────────────────────────────────────────────
+name: SBOM + Vulnerability Scan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # for SARIF upload to GitHub code scanning
+    steps:
+      - uses: actions/checkout@v4
+
+      # ─── 1. Generate SBOM (Software Bill of Materials) ──────────────────
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+
+      - name: Upload SBOM as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
+
+      # ─── 2. Vulnerability scan (Trivy) ──────────────────────────────────
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: '1'           # fail the job on findings
+          ignore-unfixed: true     # don't fail on CVEs without a fix
+
+      # ─── 3. Upload SARIF (so findings show in GitHub Security tab) ─────
+      - name: Trivy SARIF
+        if: always()
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+  image-scan:
+    needs: sbom
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Scan published image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: <REGISTRY>/<IMAGE>:${{ github.sha }}     # placeholder
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
