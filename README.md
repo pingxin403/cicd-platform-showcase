@@ -23,6 +23,18 @@ It does **not** contain production secrets, internal cluster configurations, or 
 
 ---
 
+## Companion showcases / 配套橱窗
+
+This is one corner of a three-repo showcase triangle covering my main practice areas:
+
+- [**cuckoo-echo-showcase**](https://github.com/pingxin403/cuckoo-echo-showcase) — multi-tenant AI customer-service SaaS architecture
+- **You are here** — CI/CD & release governance (this repo)
+- [**observability-platform-showcase**](https://github.com/pingxin403/observability-platform-showcase) — observability platform (OTel, structured logging, alert layering, tail-sampling)
+
+All three are docs-only and intentionally cross-reference where decisions span domains. For example: this repo's [ADR-0004 canary+SLO](docs/adr/0004-canary-with-slo-gate.md) consumes the SLO definitions from the observability showcase, and the deploy targets from cuckoo-echo's architecture.
+
+---
+
 ## Project context / 项目背景
 
 This showcase aggregates practices from:
