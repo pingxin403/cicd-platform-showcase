@@ -23,6 +23,16 @@ It does **not** contain production secrets, internal cluster configurations, or 
 
 ---
 
+## At a glance / 一图概览
+
+![CI/CD flow with canary + SLO gate](diagrams/cicd-flow.png)
+
+End-to-end CI/CD: change detection → matrix build → image publish → apps-repo bump → ArgoCD reconcile → Flagger canary gated on alert + SLO + smoke-test → either stable or auto-rollback. Each segment of this flow is detailed in the ADRs below.
+
+> Source / re-render: [`diagrams/cicd-flow.mmd`](diagrams/cicd-flow.mmd) — see [`diagrams/README.md`](diagrams/README.md).
+
+---
+
 ## Companion showcases / 配套橱窗
 
 This is one corner of a three-repo showcase triangle covering my main practice areas:

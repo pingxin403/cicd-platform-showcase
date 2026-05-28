@@ -3,6 +3,10 @@
 - **Status**: Accepted
 - **Context**: progressive rollout strategy in production
 
+![End-to-end CI/CD flow with canary + SLO gate and auto-rollback](../../diagrams/cicd-flow.png)
+
+This ADR governs the bottom-right portion of the diagram above (the gate + stable / rollback path).
+
 ## Context
 
 A canary release shifts a fraction of traffic to a new version, monitors metrics, then promotes or rolls back. The hard question is **which metrics gate promotion**.
