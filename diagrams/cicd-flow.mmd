@@ -1,0 +1,47 @@
+%%{init: {'theme':'neutral', 'themeVariables': {'fontFamily':'-apple-system, BlinkMacSystemFont, sans-serif'}}}%%
+graph LR
+    DEV[Developer<br/>git push]
+
+    subgraph CI["CI — GitHub Actions"]
+        DETECT["detect-changes<br/>per-service paths-filter"]
+        BUILD["matrix build<br/>only changed services"]
+        TEST["unit + PBT + arch-boundary"]
+        IMG["image publish<br/>(only changed)"]
+    end
+
+    subgraph APPS["apps-repo (GitOps)"]
+        BUMP["bump image tag in apps-repo<br/>(PR or auto-commit)"]
+    end
+
+    subgraph CD["CD — ArgoCD"]
+        ARGO["ArgoCD reconcile<br/>declarative sync"]
+    end
+
+    subgraph CLUSTER["Kubernetes Cluster"]
+        FLAGGER["Flagger canary<br/>progressive rollout"]
+        GATE{"Gate: alert + SLO<br/>+ smoke-test"}
+        STABLE["Stable revision<br/>(100% traffic)"]
+        ROLLBACK["Auto rollback<br/>(2 consecutive gate fails)"]
+    end
+
+    DEV --> DETECT
+    DETECT --> BUILD
+    BUILD --> TEST
+    TEST --> IMG
+    IMG --> BUMP
+    BUMP --> ARGO
+    ARGO --> FLAGGER
+    FLAGGER --> GATE
+    GATE -->|all pass| STABLE
+    GATE -->|fail twice| ROLLBACK
+
+    classDef dev fill:#e3f2fd,stroke:#1976d2,color:#0d47a1
+    classDef ci fill:#fff3e0,stroke:#f57c00,color:#e65100
+    classDef apps fill:#f3e5f5,stroke:#7b1fa2,color:#4a148c
+    classDef cd fill:#e8f5e9,stroke:#388e3c,color:#1b5e20
+    classDef gate fill:#fce4ec,stroke:#c2185b,color:#880e4f
+    class DEV dev
+    class DETECT,BUILD,TEST,IMG ci
+    class BUMP apps
+    class ARGO,FLAGGER cd
+    class GATE,STABLE,ROLLBACK gate
